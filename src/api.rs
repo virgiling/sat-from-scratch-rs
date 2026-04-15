@@ -9,9 +9,13 @@ pub trait Pass {
 }
 
 pub trait Search {
-    fn propagate(&mut self, kernel: &mut InnerSolver);
+    fn propagate(&mut self, kernel: &mut InnerSolver) -> bool;
     fn decide(&mut self, kernel: &mut InnerSolver);
     fn analyze(&mut self, kernel: &mut InnerSolver);
     fn backtrack(&mut self, kernel: &mut InnerSolver);
-    fn search(&mut self, kernel: &mut InnerSolver) -> SATResult;
+    fn search(
+        &mut self,
+        kernel: &mut InnerSolver,
+        in_processor: &mut Vec<Box<dyn Pass>>,
+    ) -> SATResult;
 }

@@ -1,3 +1,4 @@
+#[derive(Eq, PartialEq)]
 pub enum SATResult {
     SAT = 10,
     UNSAT = 20,
