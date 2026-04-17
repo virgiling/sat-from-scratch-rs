@@ -8,7 +8,13 @@ use crate::constants::{
     DEFAULT_VAR_DECAY, DEFAULT_VAR_DECAY_INC, DEFAULT_VAR_INC, INIT_PHASE, MAX_VAR_DECAY,
 };
 
-pub type Variable = usize;
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Variable {
+    pub level: usize,
+    pub trail_index: usize,
+    pub reason: Option<usize>,
+}
+
 pub type Literal = isize;
 
 #[derive(Debug, Clone, Default)]
@@ -22,8 +28,14 @@ pub struct Clause {
     garbage: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct Watches {
+    pub clause_id: usize,
+    pub blocker: Literal,
+}
+
 pub struct ActivityTable {
-    pq: KeyedPriorityQueue<Variable, OrderedFloat<f64>>,
+    pq: KeyedPriorityQueue<usize, OrderedFloat<f64>>,
     activities: Vec<f64>,
     var_inc: f64,
     var_decay: f64,
@@ -46,6 +58,8 @@ impl Clause {
 
     pub fn with_literals(mut self, literals: Vec<Literal>) -> Self {
         self.literals = literals;
+        self.literals
+            .sort_by(|l1, l2| l1.unsigned_abs().cmp(&l2.unsigned_abs()));
         self
     }
 
@@ -113,10 +127,10 @@ impl ActivityTable {
         ret
     }
 
-    pub fn bump_var_score(&mut self, var: Variable) {
-        self.activities[var] += self.var_inc;
-        let p = OrderedFloat(self.activities[var]);
-        match self.pq.entry(var) {
+    pub fn bump_var_score(&mut self, var_id: usize) {
+        self.activities[var_id] += self.var_inc;
+        let p = OrderedFloat(self.activities[var_id]);
+        match self.pq.entry(var_id) {
             keyed_priority_queue::Entry::Occupied(e) => {
                 e.set_priority(p);
             }
@@ -139,13 +153,13 @@ impl ActivityTable {
         }
     }
 
-    pub fn next_variable<F>(&mut self, mut has_assigned: F) -> Option<Variable>
+    pub fn next_variable<F>(&mut self, mut has_assigned: F) -> Option<usize>
     where
-        F: FnMut(Variable) -> bool,
+        F: FnMut(usize) -> bool,
     {
-        while let Some((v, _)) = self.pq.pop() {
-            if !has_assigned(v) {
-                return Some(v);
+        while let Some((var_id, _)) = self.pq.pop() {
+            if !has_assigned(var_id) {
+                return Some(var_id);
             }
         }
         None
@@ -161,13 +175,18 @@ impl Phases {
         }
     }
 
-    pub fn decide_phase(&self, var: Variable, forced: bool, target: bool) -> Literal {
+    pub fn decide_phase(&self, var_id: usize, forced: bool, target: bool) -> Literal {
         if forced {
-            return var as isize * (if self.forced_phases[var] { 1 } else { -1 });
+            return var_id as isize * (if self.forced_phases[var_id] { 1 } else { -1 });
         }
         if target {
-            return var as isize * (if self.target_phase[var] { 1 } else { -1 });
+            return var_id as isize * (if self.target_phase[var_id] { 1 } else { -1 });
         }
-        var as isize * (if self.saved_phases[var] { 1 } else { -1 })
+        var_id as isize * (if self.saved_phases[var_id] { 1 } else { -1 })
+    }
+
+    #[inline]
+    pub fn save_phase_for_variable(&mut self, var_id: usize, phase: bool) {
+        self.saved_phases[var_id] = phase;
     }
 }
