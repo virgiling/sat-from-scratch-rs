@@ -8,17 +8,26 @@ use crate::constants::{
     DEFAULT_VAR_DECAY, DEFAULT_VAR_DECAY_INC, DEFAULT_VAR_INC, INIT_PHASE, MAX_VAR_DECAY,
 };
 
+/// This is the variable struct, but do not associate with the real variable in the problem.
+/// It only records the trail information and the reason for the assignment.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Variable {
+    /// The decision level of the variable when it is assigned.
     pub level: usize,
+    /// The trail index of the variable when it is assigned.
     pub trail_index: usize,
+    /// The reason for the assignment, if the variable is assigned by decision, the reason is `None`. Otherwise, the reason is the clause index that the variable is assigned by.
     pub reason: Option<usize>,
 }
 
+/// This is the literal type, it is a signed integer.
+/// It is used to represent the literal in the clause.
 pub type Literal = isize;
 
 #[derive(Debug, Clone, Default)]
+/// This is the clause struct, it is used to represent the clause in the problem.
 /// A clause is a disjunction of literals.
+/// We use `lbd` to distinguish the (ir)redundant clause.
 pub struct Clause {
     /// The LBD of the clause.
     lbd: u32,
@@ -28,12 +37,32 @@ pub struct Clause {
     garbage: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+/// This is the foundation of the two-watched-literals (2WL) technique.
+/// The 2WL is a table, basically it will map the positive and negative literals to its associated clause.
+/// Then, when we do propagation, we can use the 2WL to quickly find the associated clause for a literal (which is assigned to `FALSE`).
+/// We implement the `Blocking Literal` to optimize the propagation:
+/// - The `blocker` is often chosen as the other watched literal in this clause, which index is `clause_id`.
+/// - When we really check into clauses, we should check the `blocker` first, if it is true, we can skip the clause.
+#[derive(Debug, Clone, Default, Copy)]
 pub struct Watches {
     pub clause_id: usize,
     pub blocker: Literal,
 }
 
+/// The Variable State Independent Decaying Sum (VSIDS) Heap based on the activity score of the variables.
+///
+/// # Details
+///
+/// It is used to select the next variable to assign.
+/// The activity score is metric for how frequently the variable is conflicted.
+/// The VSIDS heap is a priority queue, the key is the variable id, the value is the activity score.
+///
+/// # Update Rule
+///
+/// The activity score is updated by the following formula:
+/// - `activity_score[var_id] = activity_score[var_id] * var_decay + var_inc`
+/// - `var_inc` is the increment of the activity score, it is a constant.
+/// - `var_decay` is the decay factor of the activity score, it is a constant.
 pub struct ActivityTable {
     pq: KeyedPriorityQueue<usize, OrderedFloat<f64>>,
     activities: Vec<f64>,
@@ -41,25 +70,28 @@ pub struct ActivityTable {
     var_decay: f64,
 }
 
+/// This is the phases for the variables.
+/// It is used to store the phases for the variables in the solver.
+/// The phases are used to decide the phase for the variable when it is assigned.
+/// The phases are stored in a vector, the index is the variable id, the value is the phase.
+/// The phase is a boolean value, true for positive phase, false for negative phase.
 pub struct Phases {
+    /// The `target` phase is the longest conflict-free assigned sequence of variables assignment.
     target_phase: Vec<bool>,
+    /// The `forced` phase is the phase that the variable is assigned to by the external force.
     forced_phases: Vec<bool>,
+    /// The `saved` phase is the phase to restore the history message during the search.
     saved_phases: Vec<bool>,
 }
 
 impl Clause {
     pub fn new() -> Self {
-        Self {
-            lbd: 0,
-            literals: Vec::new(),
-            garbage: false,
-        }
+        Self { lbd: 0, literals: Vec::new(), garbage: false }
     }
 
     pub fn with_literals(mut self, literals: Vec<Literal>) -> Self {
         self.literals = literals;
-        self.literals
-            .sort_by(|l1, l2| l1.unsigned_abs().cmp(&l2.unsigned_abs()));
+        self.literals.sort_by_key(|l1| l1.unsigned_abs());
         self
     }
 

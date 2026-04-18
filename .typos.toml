@@ -1,0 +1,30 @@
+[files]
+extend-exclude = ["*.cnf", "scripts/", "third-party/", "target/"]
+
+[default]
+extend-ignore-re = [
+    # ignore string which contains $0, which is used widely in tests
+    ".*\\$0.*",
+    # ignore generated content like `boxed....nner()`, `Defaul...efault`
+    "\\w*\\.{3,4}\\w*",
+    "\\[[0-9A-F]{4},",  # AstId hex hashes
+]
+
+[default.extend-words]
+anser = "anser"
+ba = "ba"
+fo = "fo"
+ket = "ket"
+makro = "makro"
+trivias = "trivias"
+thir = "thir"
+jod = "jod"
+tructure = "tructure"
+taits = "taits"
+
+[default.extend-identifiers]
+anc = "anc"
+datas = "datas"
+impl_froms = "impl_froms"
+selfs = "selfs"
+taits = "taits"

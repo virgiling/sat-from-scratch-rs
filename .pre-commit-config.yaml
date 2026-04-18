@@ -1,0 +1,28 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-math-docs
+        name: Check LaTeX marker consistency
+        entry: grep -r "\$" src/
+        language: system
+        files: \.rs$
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy -- -D warnings
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: typos
+        name: typos
+        entry: typos
+        language: system
+        pass_filenames: false
+        always_run: true

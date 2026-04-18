@@ -1,3 +1,6 @@
+/// The solver use the Type-State pattern to represent the solver's status and constrain the state transition. It will be checked at compile time, which is a zero cost abstraction.
+/// The transition between states is as follows, which are defined in the [SolverStatus] enum:
+/// UNKNOWN -> SOLVING -> {SAT | UNSAT | UNKNOWN}
 use std::marker::PhantomData;
 
 use crate::{
@@ -6,6 +9,7 @@ use crate::{
     kernel::Kernel,
 };
 
+/// This is the status of the solver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolverStatus {
     UNKNOWN,
@@ -63,9 +67,6 @@ where
 }
 
 /// This is the main solver struct. It contains the pre-processor, in-processor, search, kernel
-/// We use type-state pattern to represent the solver's status and constrain the state transition. It will be checked at compile time, which is a zero cost abstraction.
-/// The transition between states is as follows:
-/// UNKNOWN -> SOLVING -> {SAT | UNSAT | UNKNOWN}
 pub struct Solver<S, St = UNKNOWN>
 where
     S: Search,
@@ -156,9 +157,7 @@ where
         }
 
         let mut solving = self.into_state::<SOLVING>();
-        let result = solving
-            .search
-            .search(&mut solving.kernel, &mut solving.in_processor);
+        let result = solving.search.search(&mut solving.kernel, &mut solving.in_processor);
 
         match result {
             SATResult::SAT => SolveResult::SAT(solving.into_state::<SAT>()),
@@ -186,10 +185,6 @@ where
     S: Search,
 {
     pub fn model(&self) -> Vec<bool> {
-        self.kernel
-            .assignment
-            .iter()
-            .map(|&value| value == 1)
-            .collect()
+        self.kernel.assignment.iter().map(|&value| value == 1).collect()
     }
 }
