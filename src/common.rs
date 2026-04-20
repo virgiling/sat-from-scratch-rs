@@ -258,7 +258,7 @@ impl Phases {
     ///     B -->|否| D[返回 saved_phases[var_id]]
     /// ```
     ///
-    /// 例：若 `forced=false,target=false` 且 `saved_phases[var_id]=true`，
+    /// 例：若 `target=false` 且 `saved_phases[var_id]=true`，
     /// 则本次决策文字为正文字 `+var_id`。
     #[cfg_attr(doc, aquamarine::aquamarine)]
     pub fn decide_phase(&self, var_id: usize, target: bool) -> Literal {

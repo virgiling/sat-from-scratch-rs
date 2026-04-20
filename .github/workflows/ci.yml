@@ -18,9 +18,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Build documentation
         run: cargo doc --no-deps --document-private-items
-      - name: Add index.html redirect
-        run: echo '<meta http-equiv="refresh" content="0; url=easy-sat-rs/index.html">'
-          > target/doc/index.html
+      - name: Publish crate docs at site root
+        run: |
+          cp -a target/doc/easy_sat_rs/. target/doc/
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in Path("target/doc").rglob("*.html"):
+              content = path.read_text(encoding="utf-8")
+              updated = content.replace("easy_sat_rs/index.html", "index.html")
+              if updated != content:
+                  path.write_text(updated, encoding="utf-8")
+          PY
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
