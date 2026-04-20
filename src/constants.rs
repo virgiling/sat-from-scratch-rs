@@ -1,10 +1,9 @@
-/// This module contains the constants for the solver.
+/// 求解器常量定义。
 ///
-/// This is the result of the solver.
-/// We follow the competition standard:
-/// - SAT: 10
-/// - UNSAT: 20
-/// - UNKNOWN: 0
+/// `SATResult` 数值遵循 SAT Competition 习惯：
+/// - `SAT = 10`
+/// - `UNSAT = 20`
+/// - `UNKNOWN = 0`
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum SATResult {
     SAT = 10,
@@ -12,13 +11,11 @@ pub enum SATResult {
     UNKNOWN = 0,
 }
 
-/// These following value is the DEFAULT value for solver's parameters.
-///
-/// These are the DEFAULT value for VSIDS.
+/// VSIDS/EVSIDS 默认参数。
 pub const DEFAULT_VAR_INC: f64 = 1.0;
 pub const DEFAULT_VAR_DECAY: f64 = 0.8;
 pub const DEFAULT_VAR_DECAY_INC: f64 = 0.01;
 pub const MAX_VAR_DECAY: f64 = 0.95;
 
-/// This is the DEFAULT value for the initial phase.
+/// 决策初始相位默认值。
 pub const INIT_PHASE: bool = false;

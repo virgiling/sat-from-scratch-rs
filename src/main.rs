@@ -2,6 +2,7 @@ use std::{env::args, error::Error};
 
 use easy_sat_rs::{SolveResult, SolverBuilder, search::Searcher};
 
+/// CLI 入口：读取 DIMACS 文件并输出 SAT 结果与模型。
 fn main() -> Result<(), Box<dyn Error>> {
     let args = args().collect::<Vec<String>>();
     let cnf_path = args.get(1).unwrap();

@@ -6,9 +6,36 @@ pub mod passes;
 pub mod search;
 pub mod utils;
 
-/// The solver use the Type-State pattern to represent the solver's status and constrain the state transition. It will be checked at compile time, which is a zero cost abstraction.
-/// The transition between states is as follows, which are defined in the [SolverStatus] enum:
-/// UNKNOWN -> SOLVING -> {SAT | UNSAT | UNKNOWN}
+/// 求解器使用 Type-State 模式表达状态机，并在编译期约束非法状态迁移。
+///
+/// 状态转移图：
+/// `UNKNOWN -> SOLVING -> {SAT | UNSAT | UNKNOWN}`。
+///
+/// 典型使用方式：
+/// 1. 用 [SolverBuilder] 从 DIMACS 构建内核；
+/// 2. 调用 `build().solve()`；
+/// 3. 通过 [SolveResult] 分支读取 SAT/UNSAT 结果与模型。
+///
+/// # 使用方式
+/// ```rust
+/// let cnf_path = "path/to/cnf/file.cnf";
+/// let searcher = Searcher;
+/// let solver = SolverBuilder::from_dimacs_file(searcher, &cnf_path)?.build();
+/// let result = solver.solve();
+/// match result {
+///     SolveResult::SAT(solver) => {
+///         assert!(solver.check_sat().is_ok());
+///         println!("s SATISFIABLE");
+///         solver.print_model();
+///     }
+///     SolveResult::UNSAT(solver) => {
+///         println!("s UNSATISFIABLE");
+///     }
+///     SolveResult::UNKNOWN(solver) => {
+///         println!("s UNKNOWN");
+///     }
+/// }
+/// ```
 use std::marker::PhantomData;
 use std::{fmt, fs, path::Path};
 
@@ -21,7 +48,17 @@ use crate::{
     kernel::Kernel,
 };
 
-/// This is the status of the solver.
+/// 求解器外部可见的状态枚举。
+///
+/// ```mermaid
+/// stateDiagram-v2
+///     [*] --> UNKNOWN
+///     UNKNOWN --> SOLVING: solve()
+///     SOLVING --> SAT: 找到满足赋值
+///     SOLVING --> UNSAT: 证明不可满足
+///     SOLVING --> UNKNOWN: 保守返回/提前终止
+/// ```
+#[cfg_attr(doc, aquamarine::aquamarine)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolverStatus {
     UNKNOWN,
@@ -30,6 +67,7 @@ pub enum SolverStatus {
     UNSAT,
 }
 
+/// Type-State 标记 trait。
 pub trait SolverState {
     const STATUS: SolverStatus;
 }
@@ -56,6 +94,7 @@ impl SolverState for UNSAT {
     const STATUS: SolverStatus = SolverStatus::UNSAT;
 }
 
+/// 求解结果（按最终状态分型返回）。
 pub enum SolveResult<S>
 where
     S: Search,
@@ -69,6 +108,7 @@ impl<S> SolveResult<S>
 where
     S: Search,
 {
+    /// 返回结果对应的状态枚举。
     pub const fn status(&self) -> SolverStatus {
         match self {
             Self::SAT(_) => SolverStatus::SAT,
@@ -78,6 +118,7 @@ where
     }
 }
 
+/// 解析 DIMACS 文件时可能出现的错误。
 #[derive(Debug)]
 pub enum DimacsError {
     MissingHeader,
@@ -123,6 +164,17 @@ impl From<std::io::Error> for DimacsError {
     }
 }
 
+/// 解析 DIMACS CNF 文本并构造 [Kernel]。
+///
+/// 输入约定：
+/// - 头部：`p cnf <vars> <clauses>`
+/// - 子句：以 `0` 结束
+/// - `c` 开头行为注释
+///
+/// 例：
+/// `p cnf 3 2`
+/// `1 -2 0`
+/// `2 3 0`
 fn parse_dimacs_kernel(input: &str) -> Result<Kernel, DimacsError> {
     let mut kernel: Option<Kernel> = None;
     let mut expected_clauses = 0usize;
@@ -213,6 +265,7 @@ fn parse_dimacs_kernel(input: &str) -> Result<Kernel, DimacsError> {
     Ok(kernel)
 }
 
+/// `Solver` 构建器：负责准备搜索器与内核初始状态。
 pub struct SolverBuilder<S>
 where
     S: Search,
@@ -225,34 +278,46 @@ impl<S> SolverBuilder<S>
 where
     S: Search,
 {
+    /// 用变量上限创建空公式求解器构建器。
     pub fn with_max_vars(search: S, max_vars: usize) -> Self {
         Self { search, kernel: Kernel::new(max_vars) }
     }
 
+    /// 从 DIMACS 字符串创建构建器。
     pub fn from_dimacs_str(search: S, dimacs: &str) -> Result<Self, DimacsError> {
         let kernel = parse_dimacs_kernel(dimacs)?;
         Ok(Self { search, kernel })
     }
 
+    /// 从 DIMACS 文件创建构建器。
     pub fn from_dimacs_file(search: S, path: impl AsRef<Path>) -> Result<Self, DimacsError> {
         let input = fs::read_to_string(path)?;
         Self::from_dimacs_str(search, &input)
     }
 
+    /// 只读访问内核（用于调试或查询）。
     pub fn kernel(&self) -> &Kernel {
         &self.kernel
     }
 
+    /// 可变访问内核（用于自定义注入子句/参数）。
     pub fn kernel_mut(&mut self) -> &mut Kernel {
         &mut self.kernel
     }
 
+    /// 构建求解器，初始状态为 `UNKNOWN`。
     pub fn build(self) -> Solver<S, UNKNOWN> {
         Solver::new(self.search, self.kernel)
     }
 }
 
-/// This is the main solver struct. It contains the pre-processor, in-processor, search, kernel
+/// 主求解器对象。
+///
+/// 组件说明：
+/// - `pre_processor`：搜索前执行；
+/// - `in_processor`：搜索循环中周期执行；
+/// - `search`：CDCL 核心；
+/// - `kernel`：统一状态与数据。
 pub struct Solver<S, St = UNKNOWN>
 where
     S: Search,
@@ -270,10 +335,12 @@ where
     S: Search,
     St: SolverState,
 {
+    /// 返回编译期状态对应的运行时枚举。
     pub const fn status(&self) -> SolverStatus {
         St::STATUS
     }
 
+    /// 只读访问内核。
     pub fn kernel(&self) -> &Kernel {
         &self.kernel
     }
@@ -296,6 +363,7 @@ impl<S> Solver<S, UNKNOWN>
 where
     S: Search,
 {
+    /// 创建处于 `UNKNOWN` 状态的求解器。
     pub fn new(search: S, kernel: Kernel) -> Self {
         init_logger();
         Self {
@@ -307,24 +375,32 @@ where
         }
     }
 
+    /// 注册一个预处理 Pass。
     pub fn add_preprocess_pass(&mut self, pass: impl Pass + 'static) {
         self.pre_processor.push(Box::new(pass));
     }
 
+    /// 按逗号分隔短名重排预处理 Pass。
     pub fn arrange_preprocess_passes(&mut self, ordered: &str) {
         Self::arrange_passes(&mut self.pre_processor, ordered);
     }
 
+    /// 注册一个搜索中 Pass。
     pub fn add_inprocess_pass(&mut self, pass: impl Pass + 'static) {
         self.in_processor.push(Box::new(pass));
     }
 
+    /// 按逗号分隔短名重排搜索中 Pass。
     pub fn arrange_inprocess_passes(&mut self, ordered: &str) {
         Self::arrange_passes(&mut self.in_processor, ordered);
     }
 
-    /// Type-state transition:
-    /// Unknown -> Solving -> {Sat | Unsat | Unknown}
+    /// 执行完整求解流程并返回分型结果。
+    ///
+    /// 主要顺序：
+    /// 1. 先跑预处理，若可直接判定则提前返回；
+    /// 2. 进入 `SOLVING` 状态，执行 CDCL 搜索；
+    /// 3. 按最终结果转移到 `SAT`/`UNSAT`/`UNKNOWN` 状态。
     pub fn solve(mut self) -> SolveResult<S> {
         let mut pre_result = SATResult::UNKNOWN;
         for pass in &mut self.pre_processor {
@@ -354,6 +430,7 @@ where
         }
     }
 
+    /// 根据短名称重排 Pass，未出现在 `ordered` 中的 Pass 会被丢弃。
     fn arrange_passes(passes: &mut Vec<Box<dyn Pass>>, ordered: &str) {
         let mut remaining = std::mem::take(passes);
         let mut ordered_passes: Vec<Box<dyn Pass>> = Vec::with_capacity(remaining.len());
@@ -372,10 +449,12 @@ impl<S> Solver<S, SAT>
 where
     S: Search,
 {
+    /// 导出模型（索引 0 保留，不对应实际变量）。
     pub fn model(&self) -> Vec<bool> {
         self.kernel.assignment.iter().map(|&value| value == 1).collect()
     }
 
+    /// 用当前模型逐子句校验 SAT 结果。
     pub fn check_sat(&self) -> Result<(), String> {
         let model = self.model();
         for clause in &self.kernel.clauses {
@@ -395,6 +474,7 @@ where
         Ok(())
     }
 
+    /// 按 DIMACS 竞赛风格打印模型。
     pub fn print_model(&self) {
         let model = self.model();
         print!("v ");

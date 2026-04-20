@@ -1,3 +1,8 @@
 
 [build]
-rustdocflags = ["--html-in-header", "math-config.html"]
+rustdocflags = [
+    "--html-in-header",
+    "theme/math-config.html",
+    "--extend-css",
+    "theme/logic.css",
+]

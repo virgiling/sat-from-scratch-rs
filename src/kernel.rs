@@ -3,57 +3,75 @@ use crate::{
     constants::SATResult,
 };
 
+/// 求解过程统计信息。
 #[derive(Debug, Clone, Default)]
 pub struct Statistics {
+    /// 冲突次数。
     pub conflicts: usize,
+    /// 决策次数。
     pub decisions: usize,
+    /// 传播次数（预留计数位，便于后续扩展）。
     pub propagations: usize,
+    /// 赋值次数。
     pub assignments: usize,
 }
 
+/// CDCL 求解核心内核状态。
+///
+/// `Kernel` 聚合了：
+/// - CNF 子句库与 watcher 索引（2WL）；
+/// - trail/决策层等搜索状态；
+/// - VSIDS 与相位策略；
+/// - 冲突分析与学习子句所需的临时缓存。
 pub struct Kernel {
-    /// The assignment of the variables, we use -1 for false, 0 for unknown, 1 for true.
+    /// 变量赋值表：`-1=false`，`0=unassigned`，`1=true`。
     pub assignment: Vec<i8>,
-    /// The variable table.
+    /// 变量元信息表（层级、原因子句等）。
     pub vars: Vec<Variable>,
-    /// The clause table
+    /// 子句数据库（原始子句 + 学习子句）。
     pub clauses: Vec<Clause>,
-    /// The watch list
+    /// 2WL watcher 桶。
     pub watches: Vec<Vec<Watches>>,
-    /// The trail for literal assignment, only stores the true literals
+    /// trail（仅存当前被赋为真的文字）。
     pub trail: Vec<Literal>,
-    /// The VSIDS activity table
+    /// VSIDS 活跃度表。
     pub vsids: ActivityTable,
-    /// The phases for variable decision
+    /// 相位策略状态表。
     pub phases: Phases,
-    /// The result of the solver
+    /// 当前求解结果。
     pub result: SATResult,
 
-    /// The decision level of the solver
+    /// 当前决策层。
     pub level: usize,
-    /// The target level to backtrack to after conflict analysis.
+    /// 冲突分析后要回跳到的层级。
     pub backtrack_level: usize,
-    /// The number of propagations in one decision level
+    /// trail 中“已完成传播”的前缀长度。
     pub propagated: usize,
-    /// The number of variables assigned in the current decision level
+    /// 当前已赋值变量计数。
     pub assigned: usize,
 
+    /// 当前冲突信息 `(clause_id, conflict_lit)`。
     pub conflict: Option<(usize, Literal)>,
+    /// 冲突分析中的临时学习子句缓冲（lemma）。
     pub lemma: Vec<Literal>,
+    /// 回跳后需要立即断言的 `(literal, reason_clause)`。
     pub learnt: (Literal, Option<usize>),
 
+    /// 统计信息。
     pub statistics: Statistics,
-
-    /// Used to add clauses temporarily
-    pending_clause: Vec<Literal>,
+    /// 冲突分析与 LBD 计算用的时间戳标记表。
     mark_table: Vec<usize>,
+    /// 标记表当前 epoch。
     mark_epoch: usize,
+    /// DIMACS 流式解析时暂存“尚未遇到 0 终止符”的子句。
+    pending_clause: Vec<Literal>,
 }
 
 impl Kernel {
+    /// 构建指定变量上限的求解内核。
     pub fn new(max_vars: usize) -> Self {
         Self {
-            // Variable ids are 1-based, keep index 0 unused.
+            // 变量编号从 1 开始，索引 0 保留不用。
             assignment: vec![0; max_vars + 1],
             vars: vec![Variable::default(); max_vars + 1],
             clauses: vec![],
@@ -76,6 +94,10 @@ impl Kernel {
         }
     }
 
+    /// 以流式方式添加子句文字。
+    ///
+    /// - `Some(lit)`：把文字加入当前待完成子句；
+    /// - `None`：结束当前子句，落库并挂接 watcher。
     pub fn add(&mut self, lit: Option<Literal>) {
         if let Some(lit) = lit {
             self.pending_clause.push(lit);
@@ -89,6 +111,12 @@ impl Kernel {
     }
 
     #[inline]
+    /// 在当前赋值下评估文字取值。
+    ///
+    /// 返回值约定：
+    /// - `1`：文字为真；
+    /// - `-1`：文字为假；
+    /// - `0`：变量尚未赋值。
     pub fn value(&self, lit: Literal) -> i8 {
         assert_ne!(lit, 0);
         assert!(lit.unsigned_abs() < self.assignment.len());
@@ -96,15 +124,15 @@ impl Kernel {
         if lit > 0 { value } else { -value }
     }
 
-    /// Maps a non-zero literal to the corresponding watcher bucket index.
+    /// 把非零文字映射到 watcher 桶索引。
     ///
-    /// Layout per variable:
-    /// - positive literal bucket first
-    /// - negative literal bucket second
+    /// 每个变量对应两个桶：
+    /// - 正文字 `v` -> `2*(v-1)`
+    /// - 反文字 `-v` -> `2*(v-1)+1`
     ///
-    /// So variable $v$ uses buckets:
-    /// - $2 \times (v - 1)$ for $v$
-    /// - $2 \times (v - 1) + 1$ for $\neg v$
+    /// 例：`v = 3` 时，
+    /// - `watch(3)` 的索引是 `4`
+    /// - `watch(-3)` 的索引是 `5`
     #[inline]
     fn watcher_index(&self, lit: Literal) -> usize {
         assert_ne!(lit, 0);
@@ -113,28 +141,28 @@ impl Kernel {
         ((var - 1) << 1) | usize::from(lit < 0)
     }
 
-    /// Adds one watcher entry into the bucket indexed by `watched_lit`.
+    /// 向 `watched_lit` 对应桶追加一个 watcher。
     ///
-    /// > [Note]
-    /// > in this solver, callers usually pass $\neg w$ (not $w$) where $w$ is
-    /// > the watched literal in the clause. This stores a clause under the literal
-    /// > assignment that would falsify $w$, enabling direct lookup during BCP.
+    /// 本实现遵循 2WL 常见约定：通常存入的是 `-w`（而非 `w`），
+    /// 即“让被监视文字 `w` 失效时会被触发”的桶，便于传播时 O(相关子句数) 访问。
     #[inline]
     pub fn add_watch(&mut self, watched_lit: Literal, watch: Watches) {
         let idx = self.watcher_index(watched_lit);
         self.watches[idx].push(watch);
     }
 
-    /// Initializes watch entries for a newly added clause.
+    /// 为新子句初始化 watcher。
     ///
-    /// Convention used here:
-    /// - Unit clause ($l$) stores one watcher in $watch(\neg l)$.
-    /// - Non-unit clause ($l_0 \lor l_1 \lor \ldots$) stores:
-    ///   - watcher for $l_0$ in $watch(\neg l_0)$ with $blocker = l_1$
-    ///   - watcher for $l_1$ in $watch(\neg l_1)$ with $blocker = l_0$
+    /// - 单子句 `(l)`：在 `watch(-l)` 挂一个 watcher；
+    /// - 非单子句 `(l0 ∨ l1 ∨ ...)`：
+    ///   - `l0` 的 watcher 放在 `watch(-l0)`，`blocker=l1`
+    ///   - `l1` 的 watcher 放在 `watch(-l1)`，`blocker=l0`
     ///
-    /// This matches the propagation loop that pops a true literal $p$ from trail
-    /// and directly processes $watch(p)$.
+    /// 这样传播时只需读取被新真值文字触发的桶即可。
+    ///
+    /// 例：子句 `(x1 ∨ -x4 ∨ x7)` 初始挂接后：
+    /// - `watch(-x1)` 存一条 watcher，`blocker = -x4`
+    /// - `watch(x4)` 存一条 watcher，`blocker = x1`
     fn attach_clause_watchers(&mut self, clause_id: usize) {
         let Some(clause) = self.clauses.get(clause_id) else {
             return;
@@ -153,21 +181,27 @@ impl Kernel {
         }
     }
 
-    /// Takes out and returns the full watcher bucket for `lit`.
+    /// 取走并返回 `lit` 的整桶 watcher。
     ///
-    /// `propagate` uses this "take-and-rebuild" pattern to avoid aliasing while
-    /// mutating clauses and potentially moving some watchers to other buckets.
+    /// 传播阶段采用 “take -> 处理 -> set” 方式，避免借用冲突并允许 watcher 迁移。
     pub fn watches(&mut self, lit: Literal) -> Vec<Watches> {
         let idx = self.watcher_index(lit);
         std::mem::take(&mut self.watches[idx])
     }
 
-    /// Replaces the full watcher bucket for `lit` after propagation compaction.
+    /// 将传播后压实得到的 watcher 桶写回。
     pub fn set_watches(&mut self, lit: Literal, ws: Vec<Watches>) {
         let idx = self.watcher_index(lit);
         self.watches[idx] = ws;
     }
 
+    /// 写入一次变量赋值并记录到 trail。
+    ///
+    /// - `reason=None`：决策赋值；
+    /// - `reason=Some(clause_id)`：传播蕴含赋值。
+    ///
+    /// 例：若在第 5 层写入 `lit = -9` 且 `reason = Some(12)`，
+    /// 表示变量 `x9` 在第 5 层被子句 `12` 蕴含为假。
     pub fn assign(&mut self, var_id: usize, lit: Literal, reason: Option<usize>) {
         assert!(var_id > 0 && var_id < self.assignment.len());
         let mut var = self.vars[var_id];
@@ -182,6 +216,7 @@ impl Kernel {
     }
 
     #[inline]
+    /// 撤销变量赋值（用于回跳时弹栈）。
     pub fn reset_value(&mut self, var_id: usize) {
         assert!(var_id > 0 && var_id < self.assignment.len());
         self.phases.save_phase_for_variable(var_id, self.assignment[var_id] > 0);
@@ -190,6 +225,9 @@ impl Kernel {
     }
 
     #[inline]
+    /// 申请一个新的标记 epoch。
+    ///
+    /// 若发生 `usize` 回绕，则清空标记表并从 1 重新开始。
     pub fn next_mark_epoch(&mut self) -> usize {
         self.mark_epoch = self.mark_epoch.wrapping_add(1);
         if self.mark_epoch == 0 {
@@ -200,11 +238,13 @@ impl Kernel {
     }
 
     #[inline]
+    /// 读取标记表在 `idx` 处的时间戳。
     pub fn mark_at(&self, idx: usize) -> usize {
         self.mark_table.get(idx).copied().unwrap_or(0)
     }
 
     #[inline]
+    /// 设置标记表 `idx` 的时间戳，不足则自动扩容。
     pub fn set_mark_at(&mut self, idx: usize, stamp: usize) {
         if idx >= self.mark_table.len() {
             self.mark_table.resize(idx + 1, 0);
@@ -212,6 +252,7 @@ impl Kernel {
         self.mark_table[idx] = stamp;
     }
 
+    /// 新增学习子句并初始化 watcher，返回子句编号。
     pub fn add_learned_clause_with_lbd(&mut self, literals: Vec<Literal>, lbd: u32) -> usize {
         assert!(!literals.is_empty(), "learned clause should not be empty");
         let clause = Clause::new().with_ordered_literals(literals).with_lbd(lbd);
@@ -221,6 +262,7 @@ impl Kernel {
         clause_id
     }
 
+    /// 判断当前是否已给所有变量赋值。
     pub fn satisfied(&self) -> bool {
         self.assigned + 1 == self.assignment.len()
     }
