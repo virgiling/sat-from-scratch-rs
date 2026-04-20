@@ -1,11 +1,11 @@
 [package]
-name = "easy-sat-rs"
+name = "easy_sat_rs"
 version = "0.1.0"
 edition = "2024"
 authors = ["Virgil <virgiling7@gmail.com>"]
 description = "A simple SAT solver in Rust"
 license = "MIT"
-repository = "https://github.com/virgil/easy-sat-rs"
+repository = "https://github.com/virgiling/sat-from-scratch-rs"
 keywords = ["sat", "solver", "rust"]
 categories = ["science", "math", "logic"]
 
