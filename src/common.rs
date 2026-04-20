@@ -95,6 +95,11 @@ impl Clause {
         self
     }
 
+    pub fn with_ordered_literals(mut self, literals: Vec<Literal>) -> Self {
+        self.literals = literals;
+        self
+    }
+
     pub fn with_lbd(mut self, lbd: u32) -> Self {
         self.lbd = lbd;
         self
@@ -149,24 +154,25 @@ impl ActivityTable {
     pub fn new(max_vars: usize) -> Self {
         let mut ret = Self {
             pq: KeyedPriorityQueue::new(),
-            activities: vec![0.0; max_vars],
+            activities: vec![0.0; max_vars + 1],
             var_inc: DEFAULT_VAR_INC,
             var_decay: DEFAULT_VAR_DECAY,
         };
-        for var in 0..max_vars {
+        for var in 1..=max_vars {
             ret.pq.push(var, OrderedFloat(0.0));
         }
         ret
     }
 
     pub fn bump_var_score(&mut self, var_id: usize) {
-        self.activities[var_id] += self.var_inc;
-        let p = OrderedFloat(self.activities[var_id]);
         match self.pq.entry(var_id) {
             keyed_priority_queue::Entry::Occupied(e) => {
+                self.activities[var_id] += self.var_inc;
+                let p = OrderedFloat(self.activities[var_id]);
                 e.set_priority(p);
             }
             keyed_priority_queue::Entry::Vacant(e) => {
+                let p = OrderedFloat(self.activities[var_id]);
                 e.set_priority(p);
             }
         }
@@ -185,12 +191,12 @@ impl ActivityTable {
         }
     }
 
-    pub fn next_variable<F>(&mut self, mut has_assigned: F) -> Option<usize>
+    pub fn next_variable<F>(&mut self, not_assigned: &F) -> Option<usize>
     where
-        F: FnMut(usize) -> bool,
+        F: Fn(usize) -> bool,
     {
         while let Some((var_id, _)) = self.pq.pop() {
-            if !has_assigned(var_id) {
+            if not_assigned(var_id) {
                 return Some(var_id);
             }
         }
@@ -201,9 +207,9 @@ impl ActivityTable {
 impl Phases {
     pub fn new(max_var: usize) -> Self {
         Self {
-            target_phase: vec![INIT_PHASE; max_var],
-            forced_phases: vec![INIT_PHASE; max_var],
-            saved_phases: vec![INIT_PHASE; max_var],
+            target_phase: vec![INIT_PHASE; max_var + 1],
+            forced_phases: vec![INIT_PHASE; max_var + 1],
+            saved_phases: vec![INIT_PHASE; max_var + 1],
         }
     }
 

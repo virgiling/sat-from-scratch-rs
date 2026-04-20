@@ -5,6 +5,7 @@ extend-exclude = ["*.cnf", "scripts/", "third-party/", "target/"]
 extend-ignore-re = [
     # ignore string which contains $0, which is used widely in tests
     ".*\\$0.*",
+    "lits",
     # ignore generated content like `boxed....nner()`, `Defaul...efault`
     "\\w*\\.{3,4}\\w*",
     "\\[[0-9A-F]{4},",  # AstId hex hashes

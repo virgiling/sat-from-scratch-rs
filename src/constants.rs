@@ -5,7 +5,7 @@
 /// - SAT: 10
 /// - UNSAT: 20
 /// - UNKNOWN: 0
-#[derive(Eq, PartialEq, Clone, Copy)]
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum SATResult {
     SAT = 10,
     UNSAT = 20,

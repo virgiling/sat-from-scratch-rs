@@ -12,7 +12,7 @@ const BANNER: &str = r#"
 
 pub fn init_logger() {
     load_banner();
-    tracing_subscriber::fmt::init();
+    let _ = tracing_subscriber::fmt::try_init();
 
     let version = env!("CARGO_PKG_VERSION");
     let name = env!("CARGO_PKG_NAME");
